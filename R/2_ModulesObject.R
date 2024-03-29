@@ -33,7 +33,8 @@ MOModules <- R6::R6Class("MOModules",
                                # Data:
                                # Load RDS object and populate
                                # NOTE: Replace with 'data(...)' when making package
-                               tmp = readRDS("~/Documents/Coding/MultiomicsModules/data/032224_multiomics_modules_v1.rds")
+                               data("mo_modules_v1")
+                               tmp = mo_modules_v1
                                self$modules = tmp$Modules
                                self$ID_tables = tmp$ID_Tables
                              },
