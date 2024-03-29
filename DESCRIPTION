@@ -1,0 +1,18 @@
+Package: MultiomicsModules
+Type: Package
+Title: MultiomicsModules - An R-based tool to connect to multi-omics modules.
+Version: 0.99.1
+Date: 2024-03-22
+Authors@R: c(person(given = "Jeremy", family = "Gygi", role = c("aut", "cre"), email = "jeremy.gygi@gmail.com"), person(given = "Pramod", family = "Shinde", role = c("aut"), email = "lpshinde@lji.org"))
+Description: An R-based package used to link multi-omics datasets to the R packages
+License: Artistic-2.0
+Imports: R6, tidyverse, clusterProfiler
+RoxygenNote: 7.1.2
+Suggests: knitr, rmarkdown, markdown
+VignetteBuilder: knitr
+URL: https://bitbucket.org/kleinstein/SPEAR
+BugReports: mailto:jeremy.gygi@gmail.com
+Depends: 
+    R (>= 4.2.0)
+LazyData: false
+biocViews: Transcriptomics, Proteomics, Metabolomics
