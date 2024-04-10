@@ -1,20 +1,20 @@
 #' Get multi-omics module scores for a list of analytes.
 #' @param name What version of `scores_df` to use (see `ModObj$scores$...`)? Added via `$add_analyte_scores(...)`. Defaults to `"table1"`.
-#' @param method What method to derive scores? Defaults to `"fischer"`.
-#' @param correction How to correct p.values (if method == `"fischer"`)? Defaults to `"BH"`. Use `"none"` to prevent correction. 
-#' @param min.analytes Minimum number of analytes needed to calculate a score (per assay). Defaults to `0`.
+#' @param method What method to derive scores? Defaults to `"gsea"`.
+#' @param correction How to correct p.values (if method == `"gsea"` or `"fischer"`)? Defaults to `"BH"`. Use `"none"` to prevent correction. 
+#' @param seed Seed to set (for `method = "gsea"`). Defaults to `42`. 
 #' @examples
 #' get_module_scores(...)
 #' 
 #'@export
-get_module_scores = function(name = NULL, method = "fischer", correction = "BH", min.analytes = 0){
+get_module_scores = function(name = NULL, method = "gsea", correction = "BH", seed = 42){
   # check name:
   if(is.null(name)){
     name = names(self$scores)
   }
   if(method == "percentage"){
     for(cur.name in name){
-      if(!self$params$quiet){cat("Calculating scores for name =", cur.name, "...\n")}
+      if(!self$params$quiet){cat("Calculating percentage scores for name =", cur.name, "...\n")}
       all.cur.mod.df = data.frame()
       for(mod.id in unique(self$modules$ModuleID)){
         mod.df <- self$modules
@@ -101,14 +101,14 @@ get_module_scores = function(name = NULL, method = "fischer", correction = "BH",
       }
       self$reports$percentage[[cur.name]] <- all.cur.mod.df
     }
-    cat("Done! Results saved under $reports$scores$...\n")
+    cat("Done! Results saved under $reports$percentage$...\n")
     return(invisible(self))
   } else if(method == "fischer"){
     # Get scores for all names:
     module.scores <- list()
     mod.df <- self$modules
     for(cur.name in name){
-      if(!self$params$quiet){cat("Calculating scores for name =", cur.name, "...\n")}
+      if(!self$params$quiet){cat("Calculating Fischer scores for name =", cur.name, "...\n")}
       all.p.val.df <- data.frame()
       for(assay in c("Transcriptomics", "Proteomics", "Metabolomics", "Combined")){
         tmp.p.val.df <- data.frame()
@@ -210,7 +210,161 @@ get_module_scores = function(name = NULL, method = "fischer", correction = "BH",
       
       self$reports$fischer[[cur.name]] <- all.p.val.df
     }
-    cat("Done! Results saved under $reports$scores$...\n")
+    cat("Done! Results saved under $reports$fischer$...\n")
+    return(invisible(self))
+  } else if(method == "gsea"){
+    # Set seed
+    set.seed(seed)
+    res <- list()
+    for(cur.name in names(self$scores)){
+      if(!self$params$quiet){cat("Calculating GSEA scores for name =", cur.name, "...\n")}
+      all.p.val.mat <- data.frame()
+      for(assay in c("Proteomics", "Metabolomics")){
+        # Get only mapped analytes:
+        feat.df <- self$scores[[cur.name]] %>% dplyr::filter(!is.na(MappedIDX), Assay == assay)
+        
+        # Order by magnitude of score:
+        feat.df <- dplyr::arrange(feat.df, -Score)
+        
+        # Use Score:
+        score_vec <- feat.df$Score
+        names(score_vec) <- feat.df$ConvertedID
+        
+        # Get terminology list:
+        mod.pos.df <- dplyr::filter(self$modules, Direction == "Pos", Assay == assay) %>% 
+          dplyr::select(ModuleID, AnalyteID)
+        mod.pos.df$ModuleID <- paste0(mod.pos.df$ModuleID, "_Pos")
+        mod.neg.df <- dplyr::filter(self$modules, Direction == "Neg", Assay == assay) %>% 
+          dplyr::select(ModuleID, AnalyteID)
+        mod.neg.df$ModuleID <- paste0(mod.neg.df$ModuleID, "_Neg")
+        mod.df <- rbind(mod.pos.df, mod.neg.df)
+        
+        colnames(mod.df) <- c("gs_name", "gene_symbol")
+        
+        # Run GSEA
+        mod.gsea.res <- suppressMessages(suppressWarnings(
+          clusterProfiler::GSEA(geneList = score_vec,
+                                minGSSize    = 1,
+                                maxGSSize    = 500,
+                                pvalueCutoff = 1,
+                                pAdjustMethod = correction,
+                                TERM2GENE = mod.df)
+        ))
+        
+        # build table:
+        p.val.mat <- data.frame()
+        for(mod in unique(self$modules$ModuleID)){
+          tmp <- dplyr::filter(mod.gsea.res@result, grepl(mod, ID))
+          if(nrow(tmp) > 0){
+            if(paste0(mod, "_Pos") %in% tmp$ID){
+              es.pos = tmp[paste0(mod, "_Pos"),]$NES[1]
+              pv.pos = tmp[paste0(mod, "_Pos"),]$p.adjust[1]
+            } else {
+              es.pos = NA
+              pv.pos = NA
+            }
+            if(paste0(mod, "_Neg") %in% tmp$ID){
+              es.neg = tmp[paste0(mod, "_Neg"),]$NES[1]
+              pv.neg = tmp[paste0(mod, "_Neg"),]$p.adjust[1]
+            } else {
+              es.neg = NA
+              pv.neg = NA
+            }
+            p.val.mat <- rbind(p.val.mat, data.frame(
+              ModuleID = mod,
+              Assay = assay,
+              Name = cur.name,
+              ES.Pos = es.pos,
+              P.val.Pos = pv.pos,
+              ES.Neg = es.neg,
+              P.val.Neg = pv.neg,
+              P.value = ifelse(all(is.na(c(pv.pos, pv.neg))), NA, poolr::fisher(c(pv.pos, pv.neg)[!is.na(c(pv.pos, pv.neg))])$p),
+              Direction = NA
+            ))
+          } else {
+            p.val.mat <- rbind(p.val.mat, data.frame(
+              ModuleID = mod,
+              Assay = assay,
+              Name = cur.name,
+              ES.Pos = NA,
+              P.val.Pos = NA,
+              ES.Neg = NA,
+              P.val.Neg = NA,
+              P.value = NA,
+              Direction = NA)
+            )
+          }
+        }
+        all.p.val.mat <- rbind(all.p.val.mat, p.val.mat)
+      }
+      
+      all.p.val.mat$Direction <- sapply(1:nrow(all.p.val.mat), function(i){
+        es.pos = all.p.val.mat$ES.Pos[i]
+        es.neg = all.p.val.mat$ES.Neg[i]
+        if(is.na(es.pos) & is.na(es.neg)){
+          return(NA)
+        }
+        if(is.na(es.pos) & !is.na(es.neg)){
+          if(es.neg < 0){return("Inv")} else {return("Reg")}
+        }
+        if(!is.na(es.pos) & is.na(es.neg)){
+          if(es.pos > 0){return("Reg")} else {return("Inv")}
+        }
+        if(es.pos > 0 & es.neg < 0){return("Reg")}
+        if(es.pos < 0 & es.neg > 0){return("Inv")}
+        if(abs(es.pos) > abs(es.neg)){
+          if(es.pos > 0){return("Reg")} else {return("Inv")}
+        }
+        if(abs(es.neg) > abs(es.pos)){
+          if(es.neg < 0){return("Inv")} else {return("Reg")}
+        }
+      })
+      
+      # Combine p-values:
+      combo.mat <- data.frame()
+      for(mod in unique(self$modules$ModuleID)){
+        tmp <- dplyr::filter(all.p.val.mat, ModuleID == mod)
+        if(nrow(tmp) == 0){
+          combo.mat <- rbind(combo.mat, data.frame(
+            ModuleID = mod,
+            Assay = "Combined",
+            Name = cur.name,
+            P.value = NA,
+            Direction = NA
+          ))
+        } else if(nrow(tmp) == 1){
+          combo.mat <- rbind(combo.mat, data.frame(
+            ModuleID = mod,
+            Assay = "Combined",
+            Name = cur.name,
+            P.value = tmp$P.value[1],
+            Direction = tmp$Direction[1]
+          ))
+        } else {
+          p.vals = tmp$P.value
+          p.val <- poolr::fisher(p.vals[!is.na(p.vals)])$p
+          dirs = tmp$Direction
+          if(all(dirs == "Reg", na.rm = TRUE)){direction = "Reg"}
+          else if(all(dirs == "Inv", na.rm = TRUE)){direction = "Inv"}
+          else if(sum(dirs == "Reg", na.rm = TRUE) > sum(dirs == "Inv", na.rm = TRUE)){direction = "Reg"}
+          else if(sum(dirs == "Inv", na.rm = TRUE) > sum(dirs == "Reg", na.rm = TRUE)){direction = "Reg"}
+          else {direction = dirs[which.min(p.vals)]}
+          combo.mat <- rbind(combo.mat, data.frame(
+            ModuleID = mod,
+            Assay = "Combined",
+            Name = cur.name,
+            P.value = p.val,
+            Direction = direction
+          ))
+        }
+      }
+      
+      self$reports$gsea[[cur.name]] <- list(
+        per.assay = all.p.val.mat,
+        combined = combo.mat
+      )
+    }
+    cat("Done! Results saved under $reports$gsea$...\n")
     return(invisible(self))
   }
 }
@@ -221,7 +375,7 @@ get_module_scores = function(name = NULL, method = "fischer", correction = "BH",
 #' @param name What version of `scores_df` to use (see `ModObj$scores$...`)? Added via `$add_analyte_scores(...)`. Defaults to all (`NULL`).
 #' @param module What modules to plot? Defaults to all (`NULL`).
 #' @param assay What assays to plot? Defaults to all (`NULL`).
-#' @param type Type of report (generated from `get_module_scores`), defaults to `"fischer"`.
+#' @param type Type of report (generated from `get_module_scores`), defaults to `"gsea"`.
 #' @param cap Should p-value magnitudes be capped? Useful when a few very significant p-values drive the visualization. Defaults to `1e-5`
 #' @param map.cutoff Required proportion of analytes to be mapped? Defaults to `0.15` (15%). Use `0` to ignore cutoff.
 #' @param show.adjust Show adjusted p.values? Defaults to `TRUE`.
@@ -232,7 +386,7 @@ get_module_scores = function(name = NULL, method = "fischer", correction = "BH",
 #' ModObj$plot_module_scores()
 #' 
 #'@export
-plot_report = function(name = NULL, module = NULL, assay = NULL, type = "fischer", cap = 1e-20, map.cutoff = .15, show.adjust = TRUE,  show.all = FALSE){
+plot_report = function(name = NULL, module = NULL, assay = NULL, type = "gsea", cap = 1e-20, map.cutoff = .15, show.adjust = TRUE,  show.all = FALSE){
   if(is.null(name)){
     name = names(self$scores)
   }
@@ -260,8 +414,8 @@ plot_report = function(name = NULL, module = NULL, assay = NULL, type = "fischer
     }
     
     if(map.cutoff > 0){
-      pos.props <- all.df$PosNum/all.df$TotalNum
-      neg.props <- all.df$InvNum/all.df$TotalNum
+      pos.props <- all.df$CombNum/all.df$TotalNum
+      neg.props <- all.df$CombNum/all.df$TotalNum
       comb.props <- all.df$CombNum/all.df$TotalNum
       pos.keep <- pos.props >= map.cutoff
       neg.keep <- neg.props >= map.cutoff
@@ -277,9 +431,25 @@ plot_report = function(name = NULL, module = NULL, assay = NULL, type = "fischer
       }
     }
     
+
+    
     if(show.adjust){
+      # If any p.values are 0, adjust to be the smallest overall p-value:
+      min.val <- min(c(all.df$Pos_P.adj[all.df$Pos_P.adj != 0], 
+                       all.df$Neg_P.adj[all.df$Neg_P.adj != 0], 
+                       all.df$Comb_P.adj[all.df$Comb_P.adj != 0]), na.rm = TRUE)
+      all.df$Pos_P.adj[all.df$Pos_P.adj == 0] <- min.val
+      all.df$Neg_P.adj[all.df$Neg_P.adj == 0] <- min.val
+      all.df$Comb_P.adj[all.df$Comb_P.adj == 0] <- min.val
       all.df <- dplyr::select(all.df, Name, ModuleID, Assay, Pos_P.adj, Neg_P.adj, Comb_P.adj)
     } else {
+      # If any p.values are 0, adjust to be the smallest overall p-value:
+      min.val <- min(c(all.df$Pos_P.val[all.df$Pos_P.val != 0], 
+                       all.df$Neg_P.val[all.df$Neg_P.val != 0], 
+                       all.df$Comb_P.val[all.df$Comb_P.val != 0]), na.rm = TRUE)
+      all.df$Pos_P.val[all.df$Pos_P.val == 0] <- min.val
+      all.df$Neg_P.val[all.df$Neg_P.val == 0] <- min.val
+      all.df$Comb_P.val[all.df$Comb_P.val == 0] <- min.val
       all.df <- dplyr::select(all.df, Name, ModuleID, Assay, Pos_P.val, Neg_P.val, Comb_P.val)
     }
     
@@ -356,6 +526,42 @@ plot_report = function(name = NULL, module = NULL, assay = NULL, type = "fischer
 
       
       return(p)
+  } else if(type == "gsea"){
+    all.df <- data.frame()
+    
+    for(cur.name in name){
+      if("Combined" %in% assay){
+        tmp.df <- self$reports$gsea[[cur.name]]$combined
+        tmp.df <- dplyr::filter(tmp.df, ModuleID %in% module)
+        if(nrow(tmp.df) > 0){
+          all.df <- rbind(all.df, tmp.df)
+        }
+      }
+      # Individual omics:
+      tmp.df <- self$reports$gsea[[cur.name]]$per.assay %>% dplyr::select(ModuleID, Assay, Name, P.value, Direction)
+      tmp.df <- dplyr::filter(tmp.df, ModuleID %in% module)
+      tmp.df <- dplyr::filter(tmp.df, Assay %in% assay)
+      if(nrow(tmp.df) > 0){
+        all.df <- rbind(all.df, tmp.df)
+      }
+    }
+    
+    # Update any p.value = 0 to smallest value / 2:
+    all.df$P.value[all.df$P.value == 0] <- min(all.df$P.value[all.df$P.value != 0], na.rm = TRUE)/2
+    
+    # Only show < 0.05?
+    if(!show.all){
+      all.df$P.value[all.df$P.value > 0.05] <- NA
+    }
+    
+    # Plot:
+    p <- ggplot2::ggplot(all.df) +
+      ggplot2::geom_tile(ggplot2::aes(x = Name, y = ModuleID, fill = -log10(P.value)), color = "black") +
+      ggplot2::scale_fill_gradient2(low = "darkblue", mid = "white", high = "darkred", na.value = "grey80") +
+      ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 270, hjust = 0, vjust = 0.5))
+    
+    return(p)
+    
   } else {
     stop("ERROR: type argument not recognized or supported...")
   }
@@ -492,6 +698,7 @@ add_analyte_scores = function(scores_df = NULL, name = NULL, map = TRUE){
   
   return(invisible(self))
 }
+
 
 
 #' Plot the overlap per analyte of each assay (Proteomics, Metabolomics, Transcriptomics)
