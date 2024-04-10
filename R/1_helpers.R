@@ -1,46 +1,37 @@
 #' Get multi-omics module scores for a list of analytes.
 #' @param name What version of `scores_df` to use (see `ModObj$scores$...`)? Added via `$add_analyte_scores(...)`. Defaults to `"table1"`.
-#' @param method What method to derive scores? Defaults to `"fisher"`.
-#' @param p.adjust Method to adjust p.values? Defaults to `"BH"`. Can also be `"none"`.
+#' @param method What method to derive scores? Defaults to `"fischer"`.
+#' @param correction How to correct p.values (if method == `"fischer"`)? Defaults to `"BH"`. Use `"none"` to prevent correction. 
 #' @param min.analytes Minimum number of analytes needed to calculate a score (per assay). Defaults to `0`.
 #' @examples
 #' get_module_scores(...)
 #' 
 #'@export
-get_module_scores = function(name = NULL, method = "fisher", p.adjust = "BH", min.analytes = 0){
+get_module_scores = function(name = NULL, method = "fischer", correction = "BH", min.analytes = 0){
   # check name:
   if(is.null(name)){
     name = names(self$scores)
   }
-  
-  # Get scores for all names:
-  all.p.vals <- list()
-  mod.df <- self$modules
-  for(cur.name in name){
-    if(!self$params$quiet){cat("Calculating scores for name =", cur.name, "...\n")}
-    tmp.assay.res <- list()
-    for(assay in c("Transcriptomics", "Proteomics", "Metabolomics", "Total")){
-      tmp.p.val.df <- data.frame()
-      for(mod.id in unique(mod.df$ModuleID)){
+  if(method == "percentage"){
+    for(cur.name in name){
+      if(!self$params$quiet){cat("Calculating scores for name =", cur.name, "...\n")}
+      all.cur.mod.df = data.frame()
+      for(mod.id in unique(self$modules$ModuleID)){
+        mod.df <- self$modules
         cur.mod.df <- dplyr::filter(mod.df, ModuleID == mod.id)
-        if(assay != "Total"){
-          cur.mod.df <- dplyr::filter(cur.mod.df, Assay == assay)
-        }
+        cur.mod.df$Expr <- NA
         rownames(cur.mod.df) <- cur.mod.df$AnalyteID
-        if(nrow(cur.mod.df) == 0){
-          # No analytes for this module...
-          next
-        }
-        cur.mod.df$P.value <- NA
-        # Get relative scores (for module):
-        p.val.scores <- sapply(1:nrow(self$scores[[cur.name]]), function(i){
+        rel.scores <- sapply(1:nrow(self$scores[[cur.name]]), function(i){
           assay = self$scores[[cur.name]]$Assay[i]
           analyte.id = self$scores[[cur.name]]$ConvertedID[i]
           direction = self$scores[[cur.name]]$Direction[i]
-          p.value = self$scores[[cur.name]]$P.value[i]
+          significant = self$scores[[cur.name]]$Significant[i]
+          if(!significant){
+            return(NA)
+          }
           if(!is.na(analyte.id)){
             if(analyte.id %in% cur.mod.df$AnalyteID){
-              return(ifelse(direction == "Pos", p.value, -p.value))
+              return(direction)
             } else {
               return(NA)
             }
@@ -48,94 +39,325 @@ get_module_scores = function(name = NULL, method = "fisher", p.adjust = "BH", mi
             return(NA)
           }
         })
-        names(p.val.scores) <- self$scores[[cur.name]]$ConvertedID
-        p.val.scores <- p.val.scores[!is.na(p.val.scores)]
-        cur.mod.df[names(p.val.scores),"P.value"] <- p.val.scores
-        found.cur.mod.df <- dplyr::filter(cur.mod.df, !is.na(P.value))
-        found.cur.mod.df$FoundDir <- ifelse(found.cur.mod.df$P.value >= 0, "Pos", "Neg")
-        found.cur.mod.df$P.value <- abs(found.cur.mod.df$P.value)
+        names(rel.scores) <- self$scores[[cur.name]]$ConvertedID
+        rel.scores <- rel.scores[!is.na(rel.scores)]
+        cur.mod.df[names(rel.scores),"Expr"] <- rel.scores
         
-        # NOTE: change here for different types of combinations:
-        # also: add check for min num analytes
-        tmp <- dplyr::filter(found.cur.mod.df, Direction == FoundDir)
-        reg.p.val <- poolr::fisher(tmp$P.value)$p
-        tmp <- dplyr::filter(found.cur.mod.df, Direction != FoundDir)
-        inv.p.val <- poolr::fisher(tmp$P.value)$p
-        tmp <- found.cur.mod.df
-        comb.p.val <- poolr::fisher(tmp$P.value)$p
-        
-        # add to results
-        tmp.p.val.df <- rbind(tmp.p.val.df, data.frame(
-          Pos_P.val = reg.p.val,
-          Neg_P.val = inv.p.val,
-          All_P.val = comb.p.val, row.names = mod.id
-        )) 
+        # arrange:
+        cur.mod.df <- dplyr::arrange(cur.mod.df, desc(Assay), Direction)
+        cur.mod.df$AnalyteID <- factor(cur.mod.df$AnalyteID, levels = cur.mod.df$AnalyteID)
+        cur.mod.df$Name <- cur.name
+        cur.mod.df$ModuleID <- mod.id
+
+        # Get scores:
+        assay.scores <- data.frame()
+        for(assay in c("Transcriptomics", "Proteomics", "Metabolomics", "Total")){
+          if(assay != "Total"){
+            tmp <- dplyr::filter(cur.mod.df, Assay == assay)
+          } else {
+            tmp <- cur.mod.df
+          }
+          if(nrow(tmp) > 0 & sum(!is.na(tmp$Expr)) != 0 & sum(!is.na(tmp$Expr)) >= min.analytes){
+            total.mapped <- self$scores[[cur.name]]
+            if(assay != "Total"){total.mapped <- dplyr::filter(total.mapped, Assay == assay)}
+            
+            
+            # TODO: Change jaccard total.mapped to just be the number of overlapping??? Very low...
+            
+            
+            # Upregulated:
+            jaccard_similarity.up <- sum(tmp$Expr == tmp$Direction, na.rm = TRUE) / 
+              (nrow(tmp) + nrow(total.mapped) - sum(tmp$Expr == tmp$Direction, na.rm = TRUE))
+            per.up <- sum(tmp$Expr == tmp$Direction, na.rm = TRUE)/sum(!is.na(tmp$Expr))
+            # Downregulated:
+            jaccard_similarity.down <- sum(tmp$Expr != tmp$Direction, na.rm = TRUE) / 
+              (nrow(tmp) + nrow(total.mapped) - sum(tmp$Expr != tmp$Direction, na.rm = TRUE))
+            per.down <- sum(tmp$Expr == ifelse(tmp$Direction == "Pos", "Neg", "Pos"), na.rm = TRUE)/sum(!is.na(tmp$Expr))
+              
+            assay.scores <- rbind(assay.scores, data.frame(
+              ModuleID = mod.id,
+              Assay = assay,
+              PercentageUp = per.up,
+              PercentageDown = per.down,
+              JaccardUp = jaccard_similarity.up,
+              JaccardDown = jaccard_similarity.down,
+              CorrectedUp = per.up * jaccard_similarity.up,
+              CorrectedDown = per.down * jaccard_similarity.down
+            ))
+          } else {
+            assay.scores <- rbind(assay.scores, data.frame(
+              ModuleID = mod.id,
+              Assay = assay,
+              PercentageUp = NA,
+              PercentageDown = NA,
+              JaccardUp = NA,
+              JaccardDown = NA,
+              CorrectedUp = NA,
+              CorrectedDown = NA
+            ))
+          }
+        }
+        all.cur.mod.df <- rbind(all.cur.mod.df, assay.scores)
       }
-      res = as.matrix(tmp.p.val.df)
-      if(p.adjust != "none"){
-        tmp.res <- matrix(p.adjust(res, method = "BH"), ncol = 3)
-        rownames(tmp.res) <- rownames(res)
-        colnames(tmp.res) <- colnames(res)
-        res <- tmp.res
-      }
-      tmp.assay.res[[assay]] <- res
+      self$reports$percentage[[cur.name]] <- all.cur.mod.df
     }
-    self$reports$scores[[cur.name]] <- tmp.assay.res
-    all.p.vals[[cur.name]] <- tmp.assay.res
+    cat("Done! Results saved under $reports$scores$...\n")
+    return(invisible(self))
+  } else if(method == "fischer"){
+    # Get scores for all names:
+    module.scores <- list()
+    mod.df <- self$modules
+    for(cur.name in name){
+      if(!self$params$quiet){cat("Calculating scores for name =", cur.name, "...\n")}
+      all.p.val.df <- data.frame()
+      for(assay in c("Transcriptomics", "Proteomics", "Metabolomics", "Combined")){
+        tmp.p.val.df <- data.frame()
+        for(mod.id in unique(mod.df$ModuleID)){
+          if(assay != "Combined"){
+            if(!assay %in% unique(self$scores[[cur.name]]$Assay)){
+              # No analytes for this assay provided...
+              next
+            }
+            cur.mod.df <- dplyr::filter(mod.df, ModuleID == mod.id, Assay == assay)
+            total.num <- nrow(cur.mod.df)
+          } else {
+            cur.mod.df <- dplyr::filter(mod.df, ModuleID == mod.id)
+            total.num <- nrow(cur.mod.df)
+          }
+          rownames(cur.mod.df) <- cur.mod.df$AnalyteID
+          if(nrow(cur.mod.df) == 0){
+            # No analytes for this module...
+            next
+          }
+          cur.mod.df$P.value <- NA
+          # Get p-values from all scores data.frames:
+          p.val.scores <- sapply(1:nrow(self$scores[[cur.name]]), function(i){
+            assay = self$scores[[cur.name]]$Assay[i]
+            analyte.id = self$scores[[cur.name]]$ConvertedID[i]
+            direction = self$scores[[cur.name]]$Direction[i]
+            p.value = self$scores[[cur.name]]$P.value[i]
+            if(!is.na(analyte.id)){
+              if(analyte.id %in% cur.mod.df$AnalyteID){
+                return(ifelse(direction == "Pos", p.value, -p.value))
+              } else {
+                return(NA)
+              }
+            } else {
+              return(NA)
+            }
+          })
+          names(p.val.scores) <- self$scores[[cur.name]]$ConvertedID
+          p.val.scores <- p.val.scores[!is.na(p.val.scores)]
+          cur.mod.df[names(p.val.scores),"P.value"] <- p.val.scores
+          # NOTE:: What to do if missing?? Just treat as 1's?
+          # cur.mod.df$P.value[is.na(cur.mod.df$P.value)] <- 1
+          
+          found.cur.mod.df <- dplyr::filter(cur.mod.df, !is.na(P.value))
+          found.cur.mod.df$FoundDir <- ifelse(found.cur.mod.df$P.value >= 0, "Pos", "Neg")
+          found.cur.mod.df$P.value <- abs(found.cur.mod.df$P.value)
+
+          # NOTE: change here for different types of combinations:
+          # also: add check for min num analytes
+          tmp <- dplyr::filter(found.cur.mod.df, Direction == FoundDir)
+          if(nrow(tmp) > 0){
+            reg.p.val <- poolr::fisher(tmp$P.value)$p
+            reg.num <- nrow(tmp)
+          } else {
+            reg.p.val <- NA
+            reg.num <- 0
+          }
+          tmp <- dplyr::filter(found.cur.mod.df, Direction != FoundDir)
+          if(nrow(tmp) > 0){
+            inv.p.val <- poolr::fisher(tmp$P.value)$p
+            inv.num <- nrow(tmp)
+          } else {
+            inv.p.val <- NA
+            inv.num <- 0
+          }
+          tmp <- found.cur.mod.df
+          if(nrow(tmp) > 0){
+            comb.p.val <- poolr::fisher(tmp$P.value)$p
+            comb.num <- nrow(tmp)
+          } else {
+            comb.p.val <- NA
+            comb.num <- 0
+          }
+          
+          # add to results
+          tmp.p.val.df <- rbind(tmp.p.val.df, data.frame(
+            ModuleID = mod.id,
+            Assay = assay,
+            Pos_P.val = reg.p.val,
+            Neg_P.val = inv.p.val,
+            Comb_P.val = comb.p.val,
+            TotalNum = total.num,
+            PosNum = reg.num,
+            InvNum = inv.num,
+            CombNum = comb.num
+          )) 
+        }
+        all.p.val.df <- rbind(all.p.val.df, tmp.p.val.df)
+      }
+      # correct p.values (if desired):
+      if(correction != "none"){
+        # Question: correct all together? Or just correct positive, negative, etc.? Maybe better to choose "best" (reg or inv) then correct?
+        M <- as.matrix(dplyr::select(all.p.val.df, Pos_P.val, Neg_P.val, Comb_P.val))
+        M[] <- p.adjust(M, method = correction)
+        all.p.val.df$Pos_P.adj = M[,1]
+        all.p.val.df$Neg_P.adj = M[,2]
+        all.p.val.df$Comb_P.adj = M[,3]
+      }
+      
+      self$reports$fischer[[cur.name]] <- all.p.val.df
+    }
+    cat("Done! Results saved under $reports$scores$...\n")
+    return(invisible(self))
   }
-  return(all.p.vals)
 }
 
 
 
 #' Plot the representative analytes of each assay (Proteomics, Metabolomics, Transcriptomics) vs scores
 #' @param name What version of `scores_df` to use (see `ModObj$scores$...`)? Added via `$add_analyte_scores(...)`. Defaults to all (`NULL`).
-#' @param assay What assay to show? Can be `"total"` (default) or `"proteomics"`, `"metabolomics"`, or `"transcriptomics"`.
+#' @param module What modules to plot? Defaults to all (`NULL`).
+#' @param assay What assays to plot? Defaults to all (`NULL`).
+#' @param type Type of report (generated from `get_module_scores`), defaults to `"fischer"`.
+#' @param cap Should p-value magnitudes be capped? Useful when a few very significant p-values drive the visualization. Defaults to `1e-5`
+#' @param map.cutoff Required proportion of analytes to be mapped? Defaults to `0.15` (15%). Use `0` to ignore cutoff.
+#' @param show.adjust Show adjusted p.values? Defaults to `TRUE`.
+#' @param show.all Show all p.values? Defaults to `FALSE`.
 #' @examples
 #' # run first:
 #' ModObj$get_module_scores(...)
 #' ModObj$plot_module_scores()
 #' 
 #'@export
-plot_module_scores = function(name = NULL, assay = "Total"){
+plot_report = function(name = NULL, module = NULL, assay = NULL, type = "fischer", cap = 1e-20, map.cutoff = .15, show.adjust = TRUE,  show.all = FALSE){
   if(is.null(name)){
     name = names(self$scores)
   }
-  if(length(name) > 1){
-    # Multi plot:
-    all.df <- NULL
+  if(is.null(module)){
+    module = paste0("Mod", 1:100)
+  } else {
+    module = paste0("Mod", module)
+  }
+  if(is.null(assay)){
+    assay = c("Transcriptomics", "Proteomics", "Metabolomics", "Combined")
+  }
+  
+  ### Fischer plot:
+  if(type == "fischer"){
+    all.df <- data.frame()
+    
     for(cur.name in name){
-      df <- self$reports$scores[[cur.name]][[assay]]
-      if(is.null(all.df)){
-        all.df <- df[,3,drop=F]
-      } else {
-        all.df <- cbind(all.df, df[,3])
+      tmp.df <- self$reports$fischer[[cur.name]]
+      tmp.df <- dplyr::filter(tmp.df, ModuleID %in% module)
+      tmp.df <- dplyr::filter(tmp.df, Assay %in% assay)
+      if(nrow(tmp.df) > 0){
+        tmp.df$Name <- cur.name
+        all.df <- rbind(all.df, tmp.df)
       }
     }
-    colnames(all.df) <- name
-    df.melt <- reshape2::melt(as.matrix(all.df))
     
-    p <- ggplot(df.melt) +
-      geom_point(aes(x = Var2, y = Var1, size = -log10(value), color = Var2)) +
-      theme_bw() +
-      theme(axis.text.x = element_text(angle = 270, hjust = 0, vjust = .5))
-    
-    return(p)
-  } else {
-    # Single plot:
-    if(is.null(self$reports$scores[[name]])){
-      stop("ERROR: No scores found for name: ", name, ". Please run $get_module_scores(...) first...")
+    if(map.cutoff > 0){
+      pos.props <- all.df$PosNum/all.df$TotalNum
+      neg.props <- all.df$InvNum/all.df$TotalNum
+      comb.props <- all.df$CombNum/all.df$TotalNum
+      pos.keep <- pos.props >= map.cutoff
+      neg.keep <- neg.props >= map.cutoff
+      comb.keep <- comb.props >= map.cutoff
+      if(show.adjust){
+        all.df$Pos_P.adj[!pos.keep] <- NA
+        all.df$Neg_P.adj[!neg.keep] <- NA
+        all.df$Comb_P.adj[!comb.keep] <- NA
+      } else {
+        all.df$Pos_P.val[!pos.keep] <- NA
+        all.df$Neg_P.val[!neg.keep] <- NA
+        all.df$Comb_P.val[!comb.keep] <- NA
+      }
     }
-    df <- self$reports$scores[[name]][[assay]]
-    df.melt <- reshape2::melt(df)
     
-    ggplot(df.melt) +
-      geom_point(aes(x = Var2, y = Var1, size = -log10(value), color = Var2)) +
-      scale_color_manual(values = c(
-        Pos_P.val = "red",
-        Neg_P.val = "blue",
-        All_P.val = "grey"
-      ))
+    if(show.adjust){
+      all.df <- dplyr::select(all.df, Name, ModuleID, Assay, Pos_P.adj, Neg_P.adj, Comb_P.adj)
+    } else {
+      all.df <- dplyr::select(all.df, Name, ModuleID, Assay, Pos_P.val, Neg_P.val, Comb_P.val)
+    }
+    
+    if(!show.all){
+      all.df$P.adj <- sapply(1:nrow(all.df), function(i){
+        p.pos = ifelse(show.adjust, all.df$Pos_P.adj[i], all.df$Pos_P.val[i])
+        p.neg = ifelse(show.adjust, -all.df$Neg_P.adj[i], -all.df$Neg_P.val[i])
+        # check for NA p-values:
+        if(is.na(p.pos)){
+          if(is.na(p.neg)){
+            return(NA)
+          } else {
+            return(p.neg)
+          }
+        } else if(is.na(p.neg)){
+          return(p.pos)
+        }
+        # If both aren't NA, take the best one:
+        if(p.pos < abs(p.neg)){
+          return(p.pos)
+        } else {
+          return(p.neg)
+        }
+      })
+      all.df <- dplyr::select(all.df, Name, ModuleID, Assay, P.adj)
+    } else {
+      if(show.adjust){
+        all.df$Neg_P.adj <- -all.df$Neg_P.adj
+      } else {
+        all.df$Neg_P.val <- -all.df$Neg_P.val
+      }
+    }
+    
+    tmp.melt <- reshape2::melt(all.df, id.vars = c("Name", "ModuleID", "Assay"))
+    
+    # cap magnitude?
+    if(!is.null(cap)){
+      tmp.melt$value[tmp.melt$value > 0 & tmp.melt$value < cap] <- cap
+      tmp.melt$value[tmp.melt$value < 0 & tmp.melt$value > -cap] <- -cap
+    }
+    
+    tmp.melt$SignedLogValue <- ifelse(tmp.melt$value > 0, -log10(tmp.melt$value), log10(-tmp.melt$value))
+    
+    
+    if(show.all){
+      # Plot to show all p.values (pos and inv)
+      
+      p <- ggplot2::ggplot(tmp.melt) +
+        ggplot2::geom_tile(ggplot2::aes(x = variable, 
+                                        y = factor(ModuleID, levels = paste0("Mod", 1:100)),
+                                        fill = SignedLogValue), color = "black") +
+        ggplot2::scale_fill_gradient2(low = "#2959E3", high = "#CE2525", mid = "white", na.value = "grey80") +
+        ggplot2::ylab("Module") +
+        ggplot2::xlab(NULL) +
+        ggplot2::facet_grid(cols = ggplot2::vars(factor(Assay, levels = c("Transcriptomics", "Proteomics", "Metabolomics", "Combined"))),
+                            rows = ggplot2::vars(Name)) +
+        ggplot2::scale_x_discrete(labels = c("Pos", "Inv", "All")) 
+    } else {
+      # Plot to only show values per name...
+      
+      p <- ggplot2::ggplot(tmp.melt) +
+        ggplot2::geom_tile(ggplot2::aes(x = Name, 
+                                        y = factor(ModuleID, levels = paste0("Mod", 1:100)),
+                                        fill = SignedLogValue), color = "black") +
+        ggplot2::scale_fill_gradient2(low = "#2959E3", high = "#CE2525", mid = "white", na.value = "grey80") +
+        ggplot2::ylab("Module") +
+        ggplot2::xlab(NULL) +
+        ggplot2::facet_grid(cols = ggplot2::vars(factor(Assay, levels = c("Transcriptomics", "Proteomics", "Metabolomics", "Combined")))) +
+        ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 270, hjust = 0, vjust = .5),
+                       panel.background = ggplot2::element_blank(),
+                       panel.grid = ggplot2::element_blank())
+
+    }
+
+      
+      return(p)
+  } else {
+    stop("ERROR: type argument not recognized or supported...")
   }
 }
 
@@ -264,7 +486,7 @@ add_analyte_scores = function(scores_df = NULL, name = NULL, map = TRUE){
       cat("Analytes:    \tMapped:\tPercentage:\n")
       cat("Genes       |\t", mapped.genes, "/", total.genes, "\t(", round(100*mapped.genes/total.genes, 2), "%)\n", sep = "")
       cat("Proteins    |\t", mapped.prots, "/", total.prots, "\t(", round(100*mapped.prots/total.prots, 2), "%)\n", sep = "")
-      cat("Metabolites |\t", mapped.mets, "/", total.mets, "\t(", round(100*mapped.mets/total.mets, 2), "%)\n", sep = "")
+      cat("Metabolites |\t", mapped.mets, "/", total.mets, "\t(", round(100*mapped.mets/total.mets, 2), "%)\n\n", sep = "")
     }
   }
   
@@ -336,208 +558,22 @@ convert_id <- function(analyte.id, analyte.id.type, assay){
 
 
 
-#' Perform enrichment analysis using the determined method on the chosen scores data.frame.
-#' @param name What version of `scores_df` to use (see `ModObj$scores$...`)? Added via `$add_analyte_scores(...)`. Defaults to `"table1"`.
-#' @param method What method of enrichment to use? Defaults to `"match"`
-#' @param return Return the table stored under `$reports$...`? Defaults to `TRUE`
-#' @examples
-#' ModObj$do_enrichment()
-#' 
-#'@export
-do_enrichment = function(name = "table1", method = "match", return = TRUE){
-  all.res.df <- data.frame()
-  cur.sig.df <- dplyr::filter(self$scores[[name]], !is.na(MappedIDX), Significant)
-  cur.nosig.df <- dplyr::filter(self$scores[[name]], !is.na(MappedIDX), !Significant)
-  gene.background <- dplyr::filter(self$scores[[name]], Assay == "Transcriptomics", !is.na(MappedIDX))
-  protein.background <- dplyr::filter(self$scores[[name]], Assay == "Proteomics", !is.na(MappedIDX))
-  metabolite.background <- dplyr::filter(self$scores[[name]], Assay == "Metabolomics", !is.na(MappedIDX))
-  
-  if(method == "match"){
-    for(mod.id in unique(self$modules$ModuleID)){
-      cur.mod.df <- dplyr::filter(self$modules, ModuleID == mod.id)
-      print(mod.id)
-      # Genes
-      if(nrow(gene.background) > 0){
-        cur.mod.df.assay <- dplyr::filter(cur.mod.df, Assay == "Transcriptomics")
-        mod.analytes <- cur.mod.df.assay$AnalyteID
-        mod.dirs <- cur.mod.df.assay$Direction
-        cur.sig.df.assay <- dplyr::filter(cur.sig.df, Assay == "Transcriptomics")
-        sig.analytes <- cur.sig.df.assay$ConvertedID
-        sig.dirs <- cur.sig.df.assay$Direction
-        cur.nosig.df.assay <- dplyr::filter(cur.nosig.df, Assay == "Transcriptomics")
-        nosig.analytes <- cur.nosig.df.assay$ConvertedID
-        nosig.dirs <- cur.nosig.df.assay$Direction
-        
-        #all.res.df <- rbind(all.res.df, data.frame(
-        #  Module = mod.id,
-        #  Assay = "Transcriptomics",
-        #  sig.in.pathway = length(intersect(sig.analytes, mod.analytes)),
-        #  nosig.in.pathway = length(intersect(nosig.analytes, mod.analytes))
-        #))
-      }
-      # Prots
-      if(nrow(protein.background) > 0){
-        cur.mod.df.assay <- dplyr::filter(cur.mod.df, Assay == "Proteomics")
-        mod.analytes <- cur.mod.df.assay$AnalyteID
-        cur.sig.df.assay <- dplyr::filter(cur.sig.df, Assay == "Proteomics")
-        sig.analytes <- cur.sig.df.assay$ConvertedID
-        if(length(intersect(mod.analytes, sig.analytes)) > 0){
-          mod.dirs <- cur.mod.df.assay$Direction[which(mod.analytes %in% sig.analytes)]
-          sig.dirs <- cur.sig.df.assay$Direction[which(sig.analytes %in% mod.analytes)]
-          mod.match.ids <- mod.analytes[which(mod.analytes %in% sig.analytes)]
-          sig.match.ids <- sig.analytes[which(sig.analytes %in% mod.analytes)]
-          sig.to.mod <- sapply(sig.match.ids, function(sig.id){return(which(mod.match.ids %in% sig.id))})
-          sig.match.ids <- sig.match.ids[sig.to.mod]
-          sig.dirs <- sig.dirs[sig.to.mod]
-          cur.nosig.df.assay <- dplyr::filter(cur.nosig.df, Assay == "Proteomics")
-          nosig.analytes <- cur.nosig.df.assay$ConvertedID
-          nosig.dirs <- cur.nosig.df.assay$Direction
-          
-          # Calculate:
-          sig.in.pathway = length(intersect(sig.analytes, mod.analytes))
-          nosig.in.pathway = length(intersect(nosig.analytes, mod.analytes))
-          total.in.pathway = sig.in.pathway + nosig.in.pathway
-          sig.ratio = sig.in.pathway/total.in.pathway
-          match.dir = sum(sig.dirs == mod.dirs)
-          dir.ratio = match.dir/sig.in.pathway
-        } else {
-          sig.in.pathway = NA
-          nosig.in.pathway = NA
-          sig.ratio = NA
-          match.dir = NA
-          dir.ratio = NA
-        }
-        
-        
-        all.res.df <- rbind(all.res.df, data.frame(
-          Module = mod.id,
-          Assay = "Proteomics",
-          sig.in.pathway = sig.in.pathway,
-          nosig.in.pathway = nosig.in.pathway,
-          sig.ratio = sig.ratio,
-          match.dir = match.dir,
-          dir.ratio = dir.ratio
-        ))
-      }
-      # Mets
-      if(nrow(metabolite.background) > 0){
-        cur.mod.df.assay <- dplyr::filter(cur.mod.df, Assay == "Metabolomics")
-        mod.analytes <- cur.mod.df.assay$AnalyteID
-        mod.dirs <- cur.mod.df.assay$Direction
-        cur.sig.df.assay <- dplyr::filter(cur.sig.df, Assay == "Metabolomics")
-        sig.analytes <- cur.sig.df.assay$ConvertedID
-        sig.dirs <- cur.sig.df.assay$Direction
-        cur.nosig.df.assay <- dplyr::filter(cur.nosig.df, Assay == "Metabolomics")
-        nosig.analytes <- cur.nosig.df.assay$ConvertedID
-        nosig.dirs <- cur.nosig.df.assay$Direction
-        
-        #all.res.df <- rbind(all.res.df, data.frame(
-        #  Module = mod.id,
-        #  Assay = "Metabolomics",
-        #  sig.in.pathway = length(intersect(sig.analytes, mod.analytes)),
-        #  nosig.in.pathway = length(intersect(nosig.analytes, mod.analytes))
-        #))
-      }
-    }
-  }
-  if(method == "fisher"){
-    for(mod.id in unique(self$modules$ModuleID)){
-      cur.mod.df <- dplyr::filter(self$modules, ModuleID == mod.id)
-      # Transcriptomics
-      if(nrow(gene.background) > 0){
-        cur.mod.df.assay <- dplyr::filter(cur.mod.df, Assay == "Transcriptomics")
-        mod.analytes <- cur.mod.df.assay$AnalyteID
-        cur.sig.df.assay <- dplyr::filter(cur.sig.df, Assay == "Transcriptomics")
-        sig.analytes <- cur.sig.df.assay$ConvertedID
-        cur.nosig.df.assay <- dplyr::filter(cur.nosig.df, Assay == "Transcriptomics")
-        nosig.analytes <- cur.nosig.df.assay$ConvertedID
-        f.sig.in.pathway = length(intersect(sig.analytes, mod.analytes))
-        f.nosig.in.pathway = length(intersect(nosig.analytes, mod.analytes))
-        f.sig.no.pathway = length(intersect(sig.analytes, gene.background$ConvertedID)) - f.sig.in.pathway
-        f.nosig.no.pathway = length(intersect(nosig.analytes, gene.background$ConvertedID)) - f.nosig.in.pathway
-        ct <- matrix(c(
-          sp=f.sig.in.pathway,
-          sn=f.sig.no.pathway,
-          np=f.nosig.in.pathway,
-          ns=f.nosig.no.pathway),2,2,dimnames=list(c("MOD","NOMOD"),c("SIG","NO SIG")))
-        p.val.gene = fisher.test(ct ,alt="less")$p.value
-        #cat(paste0("Testing Genes: SigPath = ", f.sig.in.pathway, ", SigNopath = ", f.sig.no.pathway, ", NosigPath = ", f.nosig.in.pathway, ", NosigNopath = ", f.nosig.no.pathway, " | p.val = ", p.val.gene, "\n"))
-      } else {
-        p.val.gene <- NA
-      }
-      # Proteomics
-      if(nrow(protein.background) > 0){
-        cur.mod.df.assay <- dplyr::filter(cur.mod.df, Assay == "Proteomics")
-        mod.analytes <- cur.mod.df.assay$AnalyteID
-        cur.sig.df.assay <- dplyr::filter(cur.sig.df, Assay == "Proteomics")
-        sig.analytes <- cur.sig.df.assay$ConvertedID
-        cur.nosig.df.assay <- dplyr::filter(cur.nosig.df, Assay == "Proteomics")
-        nosig.analytes <- cur.nosig.df.assay$ConvertedID
-        f.sig.in.pathway = length(intersect(sig.analytes, mod.analytes))
-        f.nosig.in.pathway = length(intersect(nosig.analytes, mod.analytes))
-        f.sig.no.pathway = length(intersect(sig.analytes, protein.background$ConvertedID)) - f.sig.in.pathway
-        f.nosig.no.pathway = length(intersect(nosig.analytes, protein.background$ConvertedID)) - f.nosig.in.pathway
-        ct <- matrix(c(
-          sp=f.sig.in.pathway,
-          sn=f.sig.no.pathway,
-          np=f.nosig.in.pathway,
-          ns=f.nosig.no.pathway),2,2,dimnames=list(c("MOD","NOMOD"),c("SIG","NO SIG")))
-        p.val.prot = fisher.test(ct ,alt="less")$p.value
-        #cat(paste0("Testing Prots: SigPath = ", f.sig.in.pathway, ", SigNopath = ", f.sig.no.pathway, ", NosigPath = ", f.nosig.in.pathway, ", NosigNopath = ", f.nosig.no.pathway, " | p.val = ", p.val.prot, "\n"))
-      } else {
-        p.val.prot = NA
-      }
-      # Metabolomics
-      if(nrow(metabolite.background) > 0){
-        cur.mod.df.assay <- dplyr::filter(cur.mod.df, Assay == "Metabolomics")
-        mod.analytes <- cur.mod.df.assay$AnalyteID
-        cur.sig.df.assay <- dplyr::filter(cur.sig.df, Assay == "Metabolomics")
-        sig.analytes <- cur.sig.df.assay$ConvertedID
-        cur.nosig.df.assay <- dplyr::filter(cur.nosig.df, Assay == "Metabolomics")
-        nosig.analytes <- cur.nosig.df.assay$ConvertedID
-        f.sig.in.pathway = length(intersect(sig.analytes, mod.analytes))
-        f.nosig.in.pathway = length(intersect(nosig.analytes, mod.analytes))
-        f.sig.no.pathway = length(intersect(sig.analytes, metabolite.background$ConvertedID)) - f.sig.in.pathway
-        f.nosig.no.pathway = length(intersect(nosig.analytes, metabolite.background$ConvertedID)) - f.nosig.in.pathway
-        ct <- matrix(c(
-          sp=f.sig.in.pathway,
-          sn=f.sig.no.pathway,
-          np=f.nosig.in.pathway,
-          ns=f.nosig.no.pathway),2,2,dimnames=list(c("MOD","NOMOD"),c("SIG","NO SIG")))
-        p.val.met = fisher.test(ct ,alt="less")$p.value
-        #cat(paste0("Testing Mets: SigPath = ", f.sig.in.pathway, ", SigNopath = ", f.sig.no.pathway, ", NosigPath = ", f.nosig.in.pathway, ", NosigNopath = ", f.nosig.no.pathway, " | p.val = ", p.val.met, "\n"))
-      } else {
-        p.val.met = NA
-      }
-      all.res.df <- rbind(all.res.df, data.frame(
-        ModuleID = mod.id,
-        TRANS.pval = p.val.gene,
-        PROT.pval = p.val.prot,
-        MET.pval = p.val.met
-      ))
-    }
-  }
-  self$reports$enrichment[[name]][[method]] <- all.res.df
-  return(all.res.df)
-}
-
-
-
 #' Plot the representative analytes of each assay (Proteomics, Metabolomics, Transcriptomics) vs scores
 #' @param name What version of `scores_df` to use (see `ModObj$scores$...`)? Added via `$add_analyte_scores(...)`. Defaults to all (`NULL`).
 #' @param module Which module to plot (as integer)? Defaults to `1`.
-#' @param use Which variable to plot for Data? Can be `"score"` (score provided) or `"dir"` (direction)
+#' @param use Which variable to plot for Data? Can be `"p.value"` (p.value, default), `"score"` (score provided) or `"dir"` (direction)
+#' @param cap Provide a cap for the plot? Defaults to `NULL` (no cap). Alternatively, provide a numeric.
 #' @param invert Should the module directions be inverted? Defaults to `FALSE`
 #' @param only.show.sig Only show significant analytes. Defaults to `TRUE`
 #' @param all.assays Show assays even if no analytes are present? Defaults to `FALSE`
-#' @param show.analyte.names Include x-axis names (analytes)? Defaults to `FALSE`
+#' @param show.analyte.names Include x-axis names (analytes)? Defaults to `TRUE`
 #' @examples
 #' ModObj$plot_mapping()
 #' 
 #' ModObj$plot_mapping(name = "my_scores")
 #' 
 #'@export
-plot_fingerprint = function(name = NULL, module = 1, use = "dir", invert = FALSE, only.show.sig = TRUE, all.assays = FALSE, show.analyte.names = FALSE){
+plot_fingerprint = function(name = NULL, module = 1, use = "p.value", cap = NULL, invert = FALSE, only.show.sig = TRUE, all.assays = FALSE, show.analyte.names = TRUE){
   all.cur.mod.df <- data.frame()
   if(is.null(name)){
     name = names(self$scores)
@@ -555,7 +591,13 @@ plot_fingerprint = function(name = NULL, module = 1, use = "dir", invert = FALSE
     rel.scores <- sapply(1:nrow(self$scores[[cur.name]]), function(i){
       assay = self$scores[[cur.name]]$Assay[i]
       analyte.id = self$scores[[cur.name]]$ConvertedID[i]
-      direction = ifelse(use == "dir", self$scores[[cur.name]]$Direction[i], self$scores[[cur.name]]$Score[i])
+      if(use == "dir"){
+        direction = self$scores[[cur.name]]$Direction[i]
+      } else if(use == "score"){
+        direction = self$scores[[cur.name]]$Score[i]
+      } else if(use == "p.value"){
+        direction = ifelse(self$scores[[cur.name]]$Direction[i] == "Pos", self$scores[[cur.name]]$P.value[i], -self$scores[[cur.name]]$P.value[i])
+      }
       significant = self$scores[[cur.name]]$Significant[i]
       if(only.show.sig & !significant){
         return(NA)
@@ -594,33 +636,55 @@ plot_fingerprint = function(name = NULL, module = 1, use = "dir", invert = FALSE
   # Switch to numeric if using 'score':
   if(use == "score"){
     biggest.val = max(c(abs(max(all.cur.mod.df$Expr, na.rm = TRUE)), min(all.cur.mod.df$Expr, na.rm = TRUE)))
-    cur.mod.df$Direction <- ifelse(cur.mod.df$Direction == "Pos", biggest.val, -(biggest.val))
+    cur.mod.df$Expr <- ifelse(cur.mod.df$Direction == "Pos", biggest.val, -(biggest.val))
+    # Add cap (if provided)
+    if(!is.null(cap)){
+      all.cur.mod.df$Expr[all.cur.mod.df$Expr > cap] <- cap
+      all.cur.mod.df$Expr[all.cur.mod.df$Expr < -cap] <- -cap
+    }
+  } else if(use == "p.value"){
+    biggest.val = max(-log10(abs(all.cur.mod.df$Expr)), na.rm = TRUE)
+    all.cur.mod.df$Expr <- ifelse(all.cur.mod.df$Expr > 0, -log10(abs(all.cur.mod.df$Expr)), log10(abs(all.cur.mod.df$Expr)))
+    # Add cap (if provided)
+    if(!is.null(cap)){
+      all.cur.mod.df$Expr[all.cur.mod.df$Expr > cap] <- cap
+      all.cur.mod.df$Expr[all.cur.mod.df$Expr < -cap] <- -cap
+    }
+    cur.mod.df$Expr <- ifelse(cur.mod.df$Direction == "Pos", biggest.val, -(biggest.val))
+  } else if(use == "dir"){
+    cur.mod.df$Expr <- cur.mod.df$Direction
   }
-  cur.mod.df$Expr <- cur.mod.df$Direction
   all.cur.mod.df <- rbind(all.cur.mod.df, cur.mod.df)
-
-  p = ggplot(all.cur.mod.df) +
-        geom_tile(aes(x = AnalyteID, y = Name, fill = Expr), color = "black") +
-        theme_bw() +
-        theme(panel.grid = element_blank(), panel.border = element_blank()) +
-        facet_wrap(vars(factor(Assay, levels = c("Transcriptomics", "Proteomics", "Metabolomics"))), scales = "free_x") +
-        #scale_y_discrete(labels = c(name, )) +
-        guides(fill = "none") +
-        ylab(NULL) +
-        xlab(NULL) +
-        labs(color = NULL)
+  
+  p = ggplot2::ggplot(all.cur.mod.df) +
+    ggplot2::geom_tile(ggplot2::aes(x = AnalyteID, y = Name, fill = Expr), color = "black") +
+        ggplot2::theme_bw() +
+        ggplot2::theme(panel.grid = ggplot2::element_blank(), panel.border = ggplot2::element_blank()) +
+        ggplot2::facet_wrap(ggplot2::vars(factor(Assay, levels = c("Transcriptomics", "Proteomics", "Metabolomics"))), scales = "free_x") +
+        #ggplot2::scale_y_discrete(labels = c(name, )) +
+        ggplot2::ylab(NULL) +
+        ggplot2::xlab(NULL) +
+        ggplot2::labs(color = NULL)
   
   if(!show.analyte.names){
-    p <- p + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+    p <- p + ggplot2::theme(axis.text.x = ggplot2::element_blank(), axis.ticks.x = ggplot2::element_blank())
   } else {
-    p <- p + theme(axis.text.x = element_text(angle = 270, hjust = 0, vjust = 0.5))
+    p <- p + ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 270, hjust = 0, vjust = 0.5))
   }
   
   if(use == "dir"){
-    p <- p + scale_fill_manual(values = c(Pos = "red", Neg = "blue"), na.value = "grey80")
-  } else if(use == "score"){
-    p <- p + scale_fill_gradient2(high = "red", low = "blue", na.value = "grey80")
+    p <- p + ggplot2::scale_fill_manual(values = c(Pos = "red", Neg = "blue"), na.value = "grey80")
+  } else if(use == "score" | use == "p.value"){
+    label = ifelse(use == "score", "Score", "Signed -log10(p.val)")
+    p <- p + ggplot2::scale_fill_gradient2(high = "red", low = "blue", na.value = "grey80") +
+      ggplot2::labs(fill = label) +
+      ggplot2::theme(legend.position = "bottom")
   }
   
   return(p)
-}
+} 
+
+
+
+
+

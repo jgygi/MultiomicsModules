@@ -9,6 +9,7 @@ MOModules <- R6::R6Class("MOModules",
                              
                              # Functions:
                              initialize = function(
+                               path.to.modules = NULL,
                                quiet = FALSE
                              ) {
                                # called by MOModules$new(...)
@@ -20,7 +21,8 @@ MOModules <- R6::R6Class("MOModules",
                                
                                # Reports:
                                self$reports$map = list()
-                               self$reports$scores = list()
+                               self$reports$percentage = list()
+                               self$reports$fischer = list()
                                
                                # Initialize Object
                                if(!self$params$quiet){
@@ -33,7 +35,10 @@ MOModules <- R6::R6Class("MOModules",
                                # Data:
                                # Load RDS object and populate
                                # NOTE: Replace with 'data(...)' when making package
-                               data("mo_modules_v1")
+                               if(!is.null(path.to.modules)){load(path.to.modules)}
+                               else{
+                                 data("mo_modules_v1")
+                               }
                                tmp = mo_modules_v1
                                self$modules = tmp$Modules
                                self$ID_tables = tmp$ID_Tables
@@ -48,11 +53,10 @@ MOModules <- R6::R6Class("MOModules",
     # Method functions: (each found in 1_helpers.R)
     add_analyte_scores = add_analyte_scores,  
     convert_id = convert_id,
-    do_enrichment = do_enrichment,
     get_module_scores = get_module_scores,
     plot_fingerprint = plot_fingerprint,
     plot_mapping = plot_mapping,
-    plot_module_scores = plot_module_scores
+    plot_report = plot_report
     
                            ), # end public
     private = list(
@@ -63,9 +67,11 @@ MOModules <- R6::R6Class("MOModules",
 #'@param quiet Mute print statements? Defaults to `FALSE`.
 #'@export
 make.multiomics.modules <- function(
+    path.to.modules = NULL,
     quiet = FALSE
 ){
   return(MOModules$new(
+    path.to.modules = path.to.modules,
     quiet = quiet
   ))
 }
