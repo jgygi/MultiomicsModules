@@ -7,11 +7,12 @@
 plot_fingerprint(
   name = NULL,
   module = 1,
-  use = "dir",
+  use = "p.value",
+  cap = NULL,
   invert = FALSE,
   only.show.sig = TRUE,
   all.assays = FALSE,
-  show.analyte.names = FALSE
+  show.analyte.names = TRUE
 )
 }
 \arguments{
@@ -19,7 +20,9 @@ plot_fingerprint(
 
 \item{module}{Which module to plot (as integer)? Defaults to `1`.}
 
-\item{use}{Which variable to plot for Data? Can be `"score"` (score provided) or `"dir"` (direction)}
+\item{use}{Which variable to plot for Data? Can be `"p.value"` (p.value, default), `"score"` (score provided) or `"dir"` (direction)}
+
+\item{cap}{Provide a cap for the plot? Defaults to `NULL` (no cap). Alternatively, provide a numeric.}
 
 \item{invert}{Should the module directions be inverted? Defaults to `FALSE`}
 
@@ -27,7 +30,7 @@ plot_fingerprint(
 
 \item{all.assays}{Show assays even if no analytes are present? Defaults to `FALSE`}
 
-\item{show.analyte.names}{Include x-axis names (analytes)? Defaults to `FALSE`}
+\item{show.analyte.names}{Include x-axis names (analytes)? Defaults to `TRUE`}
 }
 \description{
 Plot the representative analytes of each assay (Proteomics, Metabolomics, Transcriptomics) vs scores

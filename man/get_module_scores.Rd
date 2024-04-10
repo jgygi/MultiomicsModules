@@ -4,21 +4,16 @@
 \alias{get_module_scores}
 \title{Get multi-omics module scores for a list of analytes.}
 \usage{
-get_module_scores(
-  name = NULL,
-  method = "fisher",
-  p.adjust = "BH",
-  min.analytes = 0
-)
+get_module_scores(name = NULL, method = "gsea", correction = "BH", seed = 42)
 }
 \arguments{
 \item{name}{What version of `scores_df` to use (see `ModObj$scores$...`)? Added via `$add_analyte_scores(...)`. Defaults to `"table1"`.}
 
-\item{method}{What method to derive scores? Defaults to `"fisher"`.}
+\item{method}{What method to derive scores? Defaults to `"gsea"`.}
 
-\item{p.adjust}{Method to adjust p.values? Defaults to `"BH"`. Can also be `"none"`.}
+\item{correction}{How to correct p.values (if method == `"gsea"` or `"fischer"`)? Defaults to `"BH"`. Use `"none"` to prevent correction.}
 
-\item{min.analytes}{Minimum number of analytes needed to calculate a score (per assay). Defaults to `0`.}
+\item{seed}{Seed to set (for `method = "gsea"`). Defaults to `42`.}
 }
 \description{
 Get multi-omics module scores for a list of analytes.

@@ -4,7 +4,7 @@
 \alias{make.multiomics.modules}
 \title{Make a Multi-omics Modules object. Will return an R6 class MOModules used for the "MOModules" package.}
 \usage{
-make.multiomics.modules(quiet = FALSE)
+make.multiomics.modules(path.to.modules = NULL, quiet = FALSE)
 }
 \arguments{
 \item{quiet}{Mute print statements? Defaults to `FALSE`.}
