@@ -219,7 +219,7 @@ get_module_scores = function(name = NULL, method = "gsea", correction = "BH", se
     for(cur.name in names(self$scores)){
       if(!self$params$quiet){cat("Calculating GSEA scores for name =", cur.name, "...\n")}
       all.p.val.mat <- data.frame()
-      for(assay in c("Proteomics", "Metabolomics")){
+      for(assay in c("Transcriptomics", "Proteomics", "Metabolomics")){
         # Get only mapped analytes:
         feat.df <- self$scores[[cur.name]] %>% dplyr::filter(!is.na(MappedIDX), Assay == assay)
         
@@ -556,7 +556,7 @@ plot_report = function(name = NULL, module = NULL, assay = NULL, type = "gsea", 
     
     # Plot:
     p <- ggplot2::ggplot(all.df) +
-      ggplot2::geom_tile(ggplot2::aes(x = Name, y = ModuleID, fill = -log10(P.value)), color = "black") +
+      ggplot2::geom_tile(ggplot2::aes(x = Name, y = factor(ModuleID, levels = paste0("Mod", 1:100)), fill = -log10(P.value)), color = "black") +
       ggplot2::scale_fill_gradient2(low = "darkblue", mid = "white", high = "darkred", na.value = "grey80") +
       ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 270, hjust = 0, vjust = 0.5))
     
