@@ -558,7 +558,10 @@ plot_report = function(name = NULL, module = NULL, assay = NULL, type = "gsea", 
     p <- ggplot2::ggplot(all.df) +
       ggplot2::geom_tile(ggplot2::aes(x = Name, y = factor(ModuleID, levels = paste0("Mod", 1:100)), fill = -log10(P.value)), color = "black") +
       ggplot2::scale_fill_gradient2(low = "darkblue", mid = "white", high = "darkred", na.value = "grey80") +
-      ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 270, hjust = 0, vjust = 0.5))
+      ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 270, hjust = 0, vjust = 0.5)) +
+      ggplot2::facet_grid(ggplot2::vars(Assay)) +
+      ggplot2::xlab(NULL) + 
+      ggplot2::ylab(NULL)
     
     return(p)
     
