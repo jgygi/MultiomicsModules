@@ -103,7 +103,8 @@ get_module_scores = function(name = NULL, method = "gsea", correction = "BH", se
     }
     cat("Done! Results saved under $reports$percentage$...\n")
     return(invisible(self))
-  } else if(method == "fischer"){
+  }
+  else if(method == "fischer"){
     # Get scores for all names:
     module.scores <- list()
     mod.df <- self$modules
@@ -212,7 +213,8 @@ get_module_scores = function(name = NULL, method = "gsea", correction = "BH", se
     }
     cat("Done! Results saved under $reports$fischer$...\n")
     return(invisible(self))
-  } else if(method == "gsea"){
+  }
+  else if(method == "gsea"){
     # Set seed
     set.seed(seed)
     res <- list()
@@ -220,6 +222,9 @@ get_module_scores = function(name = NULL, method = "gsea", correction = "BH", se
       if(!self$params$quiet){cat("Calculating GSEA scores for name =", cur.name, "...\n")}
       all.p.val.mat <- data.frame()
       for(assay in c("Transcriptomics", "Proteomics", "Metabolomics")){
+        if(!assay %in% unique(self$scores[[cur.name]]$Assay)){
+          next
+        }
         # Get only mapped analytes:
         feat.df <- self$scores[[cur.name]] %>% dplyr::filter(!is.na(MappedIDX), Assay == assay)
         
@@ -556,10 +561,11 @@ plot_report = function(name = NULL, module = NULL, assay = NULL, type = "gsea", 
     
     # Plot:
     p <- ggplot2::ggplot(all.df) +
-      ggplot2::geom_tile(ggplot2::aes(x = Name, y = factor(ModuleID, levels = paste0("Mod", 1:100)), fill = -log10(P.value)), color = "black") +
+      ggplot2::geom_tile(ggplot2::aes(x = Name, y = factor(ModuleID, levels = paste0("Mod", 1:100)), fill = ifelse(Direction == "Reg", -log10(P.value), log10(P.value))), color = "black") +
       ggplot2::scale_fill_gradient2(low = "darkblue", mid = "white", high = "darkred", na.value = "grey80") +
       ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 270, hjust = 0, vjust = 0.5)) +
       ggplot2::facet_grid(ggplot2::vars(Assay)) +
+      ggplot2::labs(fill = "-log10(p.adj)") +
       ggplot2::xlab(NULL) + 
       ggplot2::ylab(NULL)
     
@@ -658,16 +664,24 @@ add_analyte_scores = function(scores_df = NULL, name = NULL, map = TRUE){
       mapped.prots = sum(!is.na(scores_df[scores_df$Assay == "Proteomics",]$MappedIDX))
     } else {mapped.prots = 0}
     
+    # Modules:
+    module.genes = length(unique(dplyr::filter(self$modules, Assay == "Transcriptomics")$AnalyteID))
+    module.prots = length(unique(dplyr::filter(self$modules, Assay == "Proteomics")$AnalyteID))
+    module.mets = length(unique(dplyr::filter(self$modules, Assay == "Metabolomics")$AnalyteID))
+    
     map.df <- data.frame(
       MappedGenes = mapped.genes,
       TotalGenes = total.genes,
-      PropGenes = mapped.genes/total.genes,
+      ModuleGenes = module.genes,
+      PropGenes = mapped.genes/module.genes,
       MappedProts = mapped.prots,
       TotalProts = total.prots,
-      PropProts = mapped.prots/total.prots,
+      ModuleProts = module.prots,
+      PropProts = mapped.prots/module.prots,
       MappedMets = mapped.mets,
       TotalMets = total.mets,
-      PropMets = mapped.mets/total.mets
+      ModuleMets = module.mets,
+      PropMets = mapped.mets/module.mets
     )
     
     self$reports$map[[name]] <- map.df
@@ -677,12 +691,15 @@ add_analyte_scores = function(scores_df = NULL, name = NULL, map = TRUE){
     self$reports$map[[name]] <- data.frame(
       MappedGenes = NA,
       TotalGenes = NA,
+      ModuleGenes = NA,
       PropGenes = NA,
       MappedProts = NA,
       TotalProts = NA,
+      ModuleProts = NA,
       PropProts = NA,
       MappedMets = NA,
       TotalMets = NA,
+      ModuleMets = NA,
       PropMets = NA
     )
   }
@@ -692,10 +709,10 @@ add_analyte_scores = function(scores_df = NULL, name = NULL, map = TRUE){
   if(!self$params$quiet){
     cat(paste0("Scores successfully added under $scores$", name, "\n"), sep =)
     if(map){
-      cat("Analytes:    \tMapped:\tPercentage:\n")
-      cat("Genes       |\t", mapped.genes, "/", total.genes, "\t(", round(100*mapped.genes/total.genes, 2), "%)\n", sep = "")
-      cat("Proteins    |\t", mapped.prots, "/", total.prots, "\t(", round(100*mapped.prots/total.prots, 2), "%)\n", sep = "")
-      cat("Metabolites |\t", mapped.mets, "/", total.mets, "\t(", round(100*mapped.mets/total.mets, 2), "%)\n\n", sep = "")
+      cat("Analytes:    \tNum.\t\tMapped:\t\tPercentage:\n")
+      cat("Genes       |\t(N=", total.genes, ")", ifelse(total.genes < 1000, "\t\t", "\t"), mapped.genes, "/", module.genes, "\t\t(", round(100*mapped.genes/module.genes, 2), "%)\n", sep = "")
+      cat("Proteins    |\t(N=", total.prots, ")", ifelse(total.prots < 1000, "\t\t", "\t"), mapped.prots, "/", module.prots, "\t(", round(100*mapped.prots/module.prots, 2), "%)\n", sep = "")
+      cat("Metabolites |\t(N=", total.mets, ")", ifelse(total.mets < 1000, "\t\t", "\t"), mapped.mets, "/", module.mets, "\t\t(", round(100*mapped.mets/module.mets, 2), "%)\n\n", sep = "")
     }
   }
   
@@ -770,12 +787,12 @@ convert_id <- function(analyte.id, analyte.id.type, assay){
 
 #' Plot the representative analytes of each assay (Proteomics, Metabolomics, Transcriptomics) vs scores
 #' @param name What version of `scores_df` to use (see `ModObj$scores$...`)? Added via `$add_analyte_scores(...)`. Defaults to all (`NULL`).
+#' @param assay What assays to plot? Defaults to all (`NULL`).
 #' @param module Which module to plot (as integer)? Defaults to `1`.
 #' @param use Which variable to plot for Data? Can be `"p.value"` (p.value, default), `"score"` (score provided) or `"dir"` (direction)
 #' @param cap Provide a cap for the plot? Defaults to `NULL` (no cap). Alternatively, provide a numeric.
 #' @param invert Should the module directions be inverted? Defaults to `FALSE`
 #' @param only.show.sig Only show significant analytes. Defaults to `TRUE`
-#' @param all.assays Show assays even if no analytes are present? Defaults to `FALSE`
 #' @param show.analyte.names Include x-axis names (analytes)? Defaults to `TRUE`
 #' @examples
 #' ModObj$plot_mapping()
@@ -783,11 +800,15 @@ convert_id <- function(analyte.id, analyte.id.type, assay){
 #' ModObj$plot_mapping(name = "my_scores")
 #' 
 #'@export
-plot_fingerprint = function(name = NULL, module = 1, use = "p.value", cap = NULL, invert = FALSE, only.show.sig = TRUE, all.assays = FALSE, show.analyte.names = TRUE){
+plot_fingerprint = function(name = NULL, assay = NULL, module = 1, use = "p.value", cap = NULL, invert = FALSE, only.show.sig = TRUE, show.analyte.names = TRUE){
   all.cur.mod.df <- data.frame()
   if(is.null(name)){
     name = names(self$scores)
   }
+  if(is.null(assay)){
+    assay = c("Transcriptomics", "Proteomics", "Metabolomics")
+  }
+  
   for(cur.name in name){
     mod.id = paste0("Mod", module)
     mod.df <- self$modules
@@ -799,7 +820,6 @@ plot_fingerprint = function(name = NULL, module = 1, use = "p.value", cap = NULL
     cur.mod.df$Expr <- NA
     rownames(cur.mod.df) <- cur.mod.df$AnalyteID
     rel.scores <- sapply(1:nrow(self$scores[[cur.name]]), function(i){
-      assay = self$scores[[cur.name]]$Assay[i]
       analyte.id = self$scores[[cur.name]]$ConvertedID[i]
       if(use == "dir"){
         direction = self$scores[[cur.name]]$Direction[i]
@@ -830,19 +850,15 @@ plot_fingerprint = function(name = NULL, module = 1, use = "p.value", cap = NULL
     cur.mod.df <- dplyr::arrange(cur.mod.df, desc(Assay), Direction)
     cur.mod.df$AnalyteID <- factor(cur.mod.df$AnalyteID, levels = cur.mod.df$AnalyteID)
     cur.mod.df$Name <- cur.name
-    # Remove irrelevant assays:
-    if(!all.assays){
-      cur.mod.df <- dplyr::filter(cur.mod.df, Assay %in% unique(self$scores[[cur.name]]$Assay))
-    }
     all.cur.mod.df <- rbind(all.cur.mod.df, cur.mod.df)
   }
   # Check if not important:
   if(nrow(cur.mod.df) == 0){
-    stop("No significant analytes found mapped to this module. Change only.show.sig = FALSE and all.assays = TRUE to force show plot.")
+    stop("No significant analytes found mapped to this module. Change only.show.sig = FALSE and assay = NULL to force show plot.")
   }
   
   # Add Mod:
-  cur.mod.df$Name <- ifelse(invert, "Mod (Inv)", "Module")
+  cur.mod.df$Name <- ifelse(invert, paste0("Mod", module, " (Inv)"), paste0("Mod", module))
   # Switch to numeric if using 'score':
   if(use == "score"){
     biggest.val = max(c(abs(max(all.cur.mod.df$Expr, na.rm = TRUE)), min(all.cur.mod.df$Expr, na.rm = TRUE)))
@@ -865,6 +881,9 @@ plot_fingerprint = function(name = NULL, module = 1, use = "p.value", cap = NULL
     cur.mod.df$Expr <- cur.mod.df$Direction
   }
   all.cur.mod.df <- rbind(all.cur.mod.df, cur.mod.df)
+  
+  # Remove irrelevant assays:
+  all.cur.mod.df <- dplyr::filter(all.cur.mod.df, Assay %in% assay)
   
   p = ggplot2::ggplot(all.cur.mod.df) +
     ggplot2::geom_tile(ggplot2::aes(x = AnalyteID, y = Name, fill = Expr), color = "black") +
