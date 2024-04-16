@@ -352,7 +352,7 @@ get_module_scores = function(name = NULL, method = "gsea", correction = "BH", se
           if(all(dirs == "Reg", na.rm = TRUE)){direction = "Reg"}
           else if(all(dirs == "Inv", na.rm = TRUE)){direction = "Inv"}
           else if(sum(dirs == "Reg", na.rm = TRUE) > sum(dirs == "Inv", na.rm = TRUE)){direction = "Reg"}
-          else if(sum(dirs == "Inv", na.rm = TRUE) > sum(dirs == "Reg", na.rm = TRUE)){direction = "Reg"}
+          else if(sum(dirs == "Inv", na.rm = TRUE) > sum(dirs == "Reg", na.rm = TRUE)){direction = "Inv"}
           else {direction = dirs[which.min(p.vals)]}
           combo.mat <- rbind(combo.mat, data.frame(
             ModuleID = mod,
