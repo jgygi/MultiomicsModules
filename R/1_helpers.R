@@ -635,7 +635,7 @@ add_analyte_scores = function(scores_df = NULL, name = NULL, map = TRUE){
       if(length(idx) == 0){
         return(NA)
       } else {
-        return(idx)
+        return(idx[1])
       }
     })
     scores_df$MappedIDX = mapped.ids
