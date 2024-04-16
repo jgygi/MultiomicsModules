@@ -863,19 +863,9 @@ plot_fingerprint = function(name = NULL, assay = NULL, module = 1, use = "p.valu
   if(use == "score"){
     biggest.val = max(c(abs(max(all.cur.mod.df$Expr, na.rm = TRUE)), min(all.cur.mod.df$Expr, na.rm = TRUE)))
     cur.mod.df$Expr <- ifelse(cur.mod.df$Direction == "Pos", biggest.val, -(biggest.val))
-    # Add cap (if provided)
-    if(!is.null(cap)){
-      all.cur.mod.df$Expr[all.cur.mod.df$Expr > cap] <- cap
-      all.cur.mod.df$Expr[all.cur.mod.df$Expr < -cap] <- -cap
-    }
   } else if(use == "p.value"){
     biggest.val = max(-log10(abs(all.cur.mod.df$Expr)), na.rm = TRUE)
     all.cur.mod.df$Expr <- ifelse(all.cur.mod.df$Expr > 0, -log10(abs(all.cur.mod.df$Expr)), log10(abs(all.cur.mod.df$Expr)))
-    # Add cap (if provided)
-    if(!is.null(cap)){
-      all.cur.mod.df$Expr[all.cur.mod.df$Expr > cap] <- cap
-      all.cur.mod.df$Expr[all.cur.mod.df$Expr < -cap] <- -cap
-    }
     cur.mod.df$Expr <- ifelse(cur.mod.df$Direction == "Pos", biggest.val, -(biggest.val))
   } else if(use == "dir"){
     cur.mod.df$Expr <- cur.mod.df$Direction
@@ -884,6 +874,14 @@ plot_fingerprint = function(name = NULL, assay = NULL, module = 1, use = "p.valu
   
   # Remove irrelevant assays:
   all.cur.mod.df <- dplyr::filter(all.cur.mod.df, Assay %in% assay)
+  
+  if(use != "dir"){
+    # Add cap (if provided)
+    if(!is.null(cap)){
+      all.cur.mod.df$Expr[all.cur.mod.df$Expr > cap] <- cap
+      all.cur.mod.df$Expr[all.cur.mod.df$Expr < -cap] <- -cap
+    }
+  }
   
   p = ggplot2::ggplot(all.cur.mod.df) +
     ggplot2::geom_tile(ggplot2::aes(x = AnalyteID, y = Name, fill = Expr), color = "black") +
