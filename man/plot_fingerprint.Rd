@@ -6,17 +6,19 @@
 \usage{
 plot_fingerprint(
   name = NULL,
+  assay = NULL,
   module = 1,
   use = "p.value",
   cap = NULL,
   invert = FALSE,
   only.show.sig = TRUE,
-  all.assays = FALSE,
   show.analyte.names = TRUE
 )
 }
 \arguments{
 \item{name}{What version of `scores_df` to use (see `ModObj$scores$...`)? Added via `$add_analyte_scores(...)`. Defaults to all (`NULL`).}
+
+\item{assay}{What assays to plot? Defaults to all (`NULL`).}
 
 \item{module}{Which module to plot (as integer)? Defaults to `1`.}
 
@@ -27,8 +29,6 @@ plot_fingerprint(
 \item{invert}{Should the module directions be inverted? Defaults to `FALSE`}
 
 \item{only.show.sig}{Only show significant analytes. Defaults to `TRUE`}
-
-\item{all.assays}{Show assays even if no analytes are present? Defaults to `FALSE`}
 
 \item{show.analyte.names}{Include x-axis names (analytes)? Defaults to `TRUE`}
 }
